@@ -5,7 +5,7 @@ Jogo estilo Duck Hunt feito em HTML, JavaScript e Canvas puro, com visual pixel-
 ## Como jogar
 
 ```bash
-npm start
+npm run dev
 ```
 
 Depois abra http://localhost:8080. Não precisa instalar nada além do Node. Também dá para abrir o `index.html` direto no navegador.
