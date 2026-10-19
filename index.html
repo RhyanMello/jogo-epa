@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EPA! RK Hunt</title>
+  <link rel="icon" href="assets/logo-rk.png">
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #111;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      cursor: none;
+      touch-action: none;
+      box-shadow: 0 0 0 4px #000, 0 0 40px rgba(0, 0, 0, .8);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="256" height="240"></canvas>
+  <script src="game.js"></script>
+</body>
+</html>
