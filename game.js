@@ -6,7 +6,6 @@
   const H = 240;
   const GRASS_Y = 176;
   const DIRT_Y = 204;
-  const DUCKS_PER_ROUND = 10;
 
   const cv = document.getElementById('game');
   const ctx = cv.getContext('2d');
@@ -332,32 +331,57 @@
     sad() { [392, 370, 349, 294].forEach((f, i) => tone(f, 0.25, 'square', 0.05, null, i * 0.25)); },
   };
 
+  // ---------- Fases ----------
+  const LEVELS = [
+    { name: 'FACIL', speed: 0.9, flyTime: 6, goal: 3, color: '#5ccd33' },
+    { name: 'NORMAL', speed: 1.2, flyTime: 5, goal: 3, color: '#8cd0ff' },
+    { name: 'MEDIO', speed: 1.55, flyTime: 4.5, goal: 3, color: '#f8d000' },
+    { name: 'DIFICIL', speed: 1.95, flyTime: 4, goal: 3, color: '#ff8c30' },
+    { name: 'IMPOSSIVEL', speed: 2.6, flyTime: 3.3, goal: 2, color: '#ff3030' },
+  ];
+  const DUCKS_PER_PHASE = 5;
+
+  // ---------- Classificação (salva no navegador) ----------
+  const RANK_KEY = 'epa-ranking';
+  let ranking = [];
+  try { ranking = JSON.parse(localStorage.getItem(RANK_KEY)) || []; } catch (e) { ranking = []; }
+  function saveRanking() {
+    try { localStorage.setItem(RANK_KEY, JSON.stringify(ranking)); } catch (e) { /* sem armazenamento */ }
+  }
+  function addToRanking(entry) {
+    ranking.push(entry);
+    ranking.sort((a, b) => b.score - a.score || a.at - b.at);
+    const pos = ranking.indexOf(entry) + 1;
+    ranking = ranking.slice(0, 10);
+    saveRanking();
+    return pos;
+  }
+
   // ---------- Estado do jogo ----------
-  const S = { TITLE: 0, INTRO: 1, PLAY: 2, HIT: 3, FALL: 4, AWAY: 5, NEXT: 6, CLEAR: 7, OVER: 8 };
+  const S = { TITLE: 0, NAME: 1, INTRO: 2, PLAY: 3, HIT: 4, FALL: 5, AWAY: 6, NEXT: 7, CLEAR: 8, OVER: 9, WIN: 10 };
+  const IN_GAME = [S.INTRO, S.PLAY, S.HIT, S.FALL, S.AWAY, S.NEXT, S.CLEAR];
   let state = S.TITLE;
   let st = 0; // tempo no estado atual
   let time = 0;
-  let round = 1;
+  let phase = 0;
   let duckIdx = 0;
   let results = []; // 0 = pendente, 1 = acertou, 2 = fugiu
   let shots = 3;
   let score = 0;
-  let best = 0;
   let duck = null;
   let flash = 0;
   let popups = [];
   let mouse = { x: W / 2, y: H / 2 };
   let lastResult = 0;
+  let playerName = '';
+  let finalPos = 0;
+  let lastEntry = null;
+  let overlay = null; // null | 'pause' | 'rank'
+  let rankBack = null;
+  let clearConfirm = 0;
+  let buttons = [];
 
-  try { best = parseInt(localStorage.getItem('epa-recorde'), 10) || 0; } catch (e) { best = 0; }
-  function saveBest() {
-    if (score > best) best = score;
-    try { localStorage.setItem('epa-recorde', String(best)); } catch (e) { /* sem armazenamento */ }
-  }
-
-  function needed() {
-    return Math.min(9, 6 + Math.floor((round - 1) / 2));
-  }
+  const level = () => LEVELS[phase];
 
   function setState(s) {
     state = s;
@@ -365,22 +389,24 @@
   }
 
   function startGame() {
-    round = 1;
+    phase = 0;
     score = 0;
-    startRound();
+    popups = [];
+    startPhase();
   }
 
-  function startRound() {
-    results = new Array(DUCKS_PER_ROUND).fill(0);
+  function startPhase() {
+    results = new Array(DUCKS_PER_PHASE).fill(0);
     duckIdx = 0;
+    duck = null;
     setState(S.INTRO);
     sfx.jingle();
   }
 
   function pickType() {
     const r = Math.random();
-    const red = Math.min(0.35, 0.05 + round * 0.04);
-    const blue = Math.min(0.4, 0.2 + round * 0.03);
+    const red = 0.08 + phase * 0.07;
+    const blue = 0.25 + phase * 0.03;
     if (r < red) return DUCK_TYPES[2];
     if (r < red + blue) return DUCK_TYPES[1];
     return DUCK_TYPES[0];
@@ -392,7 +418,7 @@
     const sy = forceUp || Math.random() < 0.55 ? -1 : 1;
     d.vx = Math.cos(ang) * d.speed * sx;
     d.vy = Math.sin(ang) * d.speed * sy;
-    d.turn = 0.6 + Math.random() * 1.0;
+    d.turn = (0.6 + Math.random() * 1.0) / Math.sqrt(level().speed);
   }
 
   function spawnDuck() {
@@ -401,7 +427,7 @@
       type,
       x: 50 + Math.random() * (W - 100 - DUCK_W),
       y: GRASS_Y - 4,
-      speed: 55 * type.speed * (1 + (round - 1) * 0.1),
+      speed: 60 * level().speed * (1 + (type.speed - 1) * 0.6),
       anim: 0,
       spin: 0,
     };
@@ -413,7 +439,7 @@
 
   function flyAway() {
     duck.vx = 0;
-    duck.vy = -Math.max(120, duck.speed * 1.5);
+    duck.vy = -Math.max(150, duck.speed * 1.5);
     results[duckIdx] = 2;
     lastResult = 2;
     setState(S.AWAY);
@@ -427,7 +453,7 @@
     shotSfx();
     const pad = 5;
     if (x >= duck.x - pad && x <= duck.x + DUCK_W + pad && y >= duck.y - pad && y <= duck.y + DUCK_H + pad) {
-      const pts = duck.type.points * round;
+      const pts = duck.type.points * (phase + 1);
       score += pts;
       results[duckIdx] = 1;
       lastResult = 1;
@@ -439,31 +465,41 @@
     }
   }
 
+  function finish(won) {
+    lastEntry = { name: playerName, score, phase: phase + 1, level: level().name, won, at: Date.now() };
+    finalPos = addToRanking(lastEntry);
+    setState(won ? S.WIN : S.OVER);
+    if (won) sfx.jingle(); else sfx.sad();
+  }
+
   function nextDuck() {
     duckIdx++;
-    if (duckIdx < DUCKS_PER_ROUND) {
+    if (duckIdx < DUCKS_PER_PHASE) {
       spawnDuck();
       return;
     }
     const hits = results.filter(r => r === 1).length;
-    if (hits === DUCKS_PER_ROUND) {
-      const bonus = 10000 * round;
+    if (hits === DUCKS_PER_PHASE) {
+      const bonus = 2000 * (phase + 1);
       score += bonus;
       popups.push({ x: W / 2, y: 130, text: 'PERFEITO! +' + bonus, t: 0 });
     }
-    if (hits >= needed()) {
+    if (hits < level().goal) {
+      finish(false);
+    } else if (phase === LEVELS.length - 1) {
+      score += 10000;
+      finish(true);
+    } else {
       setState(S.CLEAR);
       sfx.jingle();
-    } else {
-      saveBest();
-      setState(S.OVER);
-      sfx.sad();
     }
   }
 
   // ---------- Atualização ----------
   function update(dt) {
     time += dt;
+    clearConfirm = Math.max(0, clearConfirm - dt);
+    if (overlay) return;
     st += dt;
     flash = Math.max(0, flash - dt);
     popups.forEach(p => { p.t += dt; p.y -= 12 * dt; });
@@ -473,7 +509,7 @@
 
     switch (state) {
       case S.INTRO:
-        if (st > 1.6) spawnDuck();
+        if (st > 1.3) spawnDuck();
         break;
 
       case S.PLAY: {
@@ -485,23 +521,23 @@
         if (d.x > W - DUCK_W) { d.x = W - DUCK_W; d.vx = -Math.abs(d.vx); }
         if (d.y < 4) { d.y = 4; d.vy = Math.abs(d.vy); }
         const floor = GRASS_Y - DUCK_H - 14;
-        if (d.y > floor && st > 0.8) { d.y = floor; d.vy = -Math.abs(d.vy); }
+        if (d.y > floor && st > 0.6) { d.y = floor; d.vy = -Math.abs(d.vy); }
         if (d.turn <= 0) newDirection(d);
         if (Math.random() < dt * 0.4) sfx.quack();
-        if (st > 7 - Math.min(2.5, (round - 1) * 0.3)) flyAway();
+        if (st > level().flyTime) flyAway();
         break;
       }
 
       case S.HIT:
-        if (st > 0.45) {
+        if (st > 0.3) {
           setState(S.FALL);
-          duck.vy = 40;
+          duck.vy = 60;
           sfx.fall();
         }
         break;
 
       case S.FALL:
-        duck.vy += 220 * dt;
+        duck.vy += 320 * dt;
         duck.y += duck.vy * dt;
         duck.spin += dt;
         if (duck.y > GRASS_Y + 4) {
@@ -516,21 +552,60 @@
         break;
 
       case S.NEXT:
-        if (st > 1.1) nextDuck();
+        if (st > 0.6) nextDuck();
         break;
 
       case S.CLEAR:
-        if (st > 2.6) {
-          round++;
-          startRound();
+        if (st > 1.8) {
+          phase++;
+          startPhase();
         }
         break;
     }
   }
 
+  // ---------- Botões ----------
+  function button(label, cx, y, action, opts = {}) {
+    const s = opts.scale || 2;
+    const w = opts.w || textWidth(label, s) + 16;
+    const h = 7 + 5 * s;
+    const x = Math.round(cx - w / 2);
+    const hover = !opts.disabled && mouse.x >= x && mouse.x <= x + w && mouse.y >= y && mouse.y <= y + h;
+    ctx.fillStyle = opts.disabled ? '#666' : hover ? '#f8d000' : '#fff';
+    ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+    ctx.fillStyle = hover ? '#a03000' : '#000';
+    ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+    drawText(label, cx, y + Math.floor((h - 5 * s) / 2), s, opts.disabled ? '#888' : hover ? '#fff' : opts.color || '#fff', 'center');
+    if (!opts.disabled) buttons.push({ x, y, w, h, action });
+  }
+
+  function openRank() {
+    rankBack = overlay;
+    overlay = 'rank';
+    clearConfirm = 0;
+  }
+
+  function goTitle() {
+    overlay = null;
+    duck = null;
+    setState(S.TITLE);
+  }
+
+  function goName() {
+    overlay = null;
+    playerName = '';
+    setState(S.NAME);
+  }
+
+  function beginWithName() {
+    if (!playerName.trim()) return;
+    playerName = playerName.trim();
+    startGame();
+  }
+
   // ---------- Renderização ----------
   function drawDuck() {
-    if (!duck || state === S.INTRO || state === S.CLEAR || state === S.OVER) return;
+    if (!duck || !IN_GAME.includes(state) || state === S.INTRO || state === S.CLEAR) return;
     if (state === S.NEXT && lastResult === 2) return;
     const d = duck;
     let img;
@@ -553,55 +628,176 @@
   }
 
   function drawHud() {
-    // Rodada
-    box(8, 190, 30, 11);
-    drawText('R=' + round, 23, 193, 1, '#5ccd33', 'center');
+    // Fase e nível
+    const label = 'FASE ' + (phase + 1) + ' ' + level().name;
+    box(8, 190, textWidth(label, 1) + 8, 11);
+    drawText(label, 12, 193, 1, level().color);
+
+    // Jogador
+    box(W - 8 - textWidth(playerName, 1) - 8, 190, textWidth(playerName, 1) + 8, 11);
+    drawText(playerName, W - 12, 193, 1, '#fff', 'right');
 
     // Tiros
     box(8, 210, 34, 24);
     for (let i = 0; i < 3; i++) {
-      if (i < shots || state === S.TITLE) ctx.drawImage(bullet, 14 + i * 9, 214, 3 * 2, 6 * 2);
+      if (i < shots) ctx.drawImage(bullet, 14 + i * 9, 214, 3 * 2, 6 * 2);
     }
     drawText('TIROS', 25, 228, 1, '#5ccd33', 'center');
 
     // Acertos
     box(46, 210, 128, 24);
     drawText('ACERTO', 50, 214, 1, '#5ccd33');
-    for (let i = 0; i < DUCKS_PER_ROUND; i++) {
+    for (let i = 0; i < DUCKS_PER_PHASE; i++) {
       const r = results[i] || 0;
-      let img = r === 1 ? miniRed : r === 2 ? miniGray : miniWhite;
+      const img = r === 1 ? miniRed : r === 2 ? miniGray : miniWhite;
       const blink = (state === S.PLAY || state === S.HIT) && i === duckIdx && Math.floor(time * 4) % 2;
       if (blink) continue;
-      ctx.drawImage(img, 78 + i * 9, 214, 7, 4);
+      ctx.drawImage(img, 82 + i * 16, 213, 14, 8);
     }
-    // Marcador de acertos necessários
     ctx.fillStyle = '#3c78ff';
-    for (let i = 0; i < needed(); i++) ctx.fillRect(78 + i * 9, 221, 7, 2);
-    drawText('META ' + needed() + '/' + DUCKS_PER_ROUND, 110, 226, 1, '#8cb4ff', 'center');
+    for (let i = 0; i < level().goal; i++) ctx.fillRect(82 + i * 16, 223, 14, 2);
+    drawText('META ' + level().goal + '/' + DUCKS_PER_PHASE, 110, 227, 1, '#8cb4ff', 'center');
 
     // Pontos
     box(178, 210, 70, 24);
     drawText(String(score).padStart(6, '0'), 242, 214, 1, '#fff', 'right');
     drawText('PONTOS', 242, 226, 1, '#5ccd33', 'right');
+
+    // Botão de pausa
+    if (!overlay) {
+      const x = W - 22;
+      const y = 4;
+      const hover = mouse.x >= x && mouse.x <= x + 18 && mouse.y >= y && mouse.y <= y + 14;
+      box(x, y, 18, 14, hover ? '#f8d000' : '#fff');
+      ctx.fillStyle = hover ? '#f8d000' : '#fff';
+      ctx.fillRect(x + 6, y + 4, 2, 6);
+      ctx.fillRect(x + 10, y + 4, 2, 6);
+      buttons.push({ x, y, w: 18, h: 14, action: () => { overlay = 'pause'; } });
+    }
+  }
+
+  function dim(a = 0.6) {
+    ctx.fillStyle = `rgba(0,0,0,${a})`;
+    ctx.fillRect(0, 0, W, H);
   }
 
   function drawTitle() {
-    ctx.fillStyle = 'rgba(0,0,0,.55)';
-    ctx.fillRect(0, 0, W, H);
+    dim(0.55);
     if (logo.complete && logo.naturalWidth) {
       ctx.fillStyle = '#000';
-      ctx.fillRect(W / 2 - 34, 12, 68, 68);
-      ctx.drawImage(logo, W / 2 - 32, 14, 64, 64);
+      ctx.fillRect(W / 2 - 26, 6, 52, 52);
+      ctx.drawImage(logo, W / 2 - 24, 8, 48, 48);
     }
-    drawText('EPA!', W / 2, 90, 6, '#f8d000', 'center', '#a03000');
-    drawText('RK HUNT', W / 2, 126, 3, '#fff', 'center', '#000');
-    drawText('RK INFORMATICA E GAMES', W / 2, 148, 1, '#f8d000', 'center');
-    if (Math.floor(time * 2) % 2 === 0) drawText('CLIQUE PARA JOGAR', W / 2, 166, 2, '#fff', 'center', '#000');
-    drawText('RECORDE ' + String(best).padStart(6, '0'), W / 2, 190, 1, '#8cf', 'center');
-    drawText('M: SOM ' + (muted ? 'OFF' : 'ON'), W / 2, 228, 1, '#ccc', 'center');
+    drawText('EPA!', W / 2, 64, 5, '#f8d000', 'center', '#a03000');
+    drawText('RK HUNT', W / 2, 92, 2, '#fff', 'center', '#000');
+    drawText('RK INFORMATICA E GAMES', W / 2, 106, 1, '#f8d000', 'center');
+    button('JOGAR', W / 2, 118, goName, { w: 120 });
+    button('CLASSIFICACAO', W / 2, 140, openRank, { w: 120 });
+
+    // Tabela de pontos
+    drawText('PONTOS POR PASSARO', W / 2, 166, 1, '#8cf', 'center');
+    DUCK_TYPES.forEach((t, i) => {
+      const x = 40 + i * 64;
+      ctx.drawImage(t.frames[Math.floor(time * 8 + i) % 4], x, 176);
+      drawText(String(t.points), x + 20, 181, 1, '#fff');
+    });
+    drawText('X NUMERO DA FASE', W / 2, 196, 1, '#ccc', 'center');
+
+    if (ranking.length) {
+      const r = ranking[0];
+      drawText('RECORDE: ' + r.name + ' ' + r.score, W / 2, 210, 1, '#f8d000', 'center');
+    }
+    drawText('M: SOM ' + (muted ? 'OFF' : 'ON') + '   ESC: PAUSA', W / 2, 228, 1, '#ccc', 'center');
+  }
+
+  function drawName() {
+    dim(0.7);
+    drawText('DIGITE SEU NOME', W / 2, 40, 2, '#f8d000', 'center', '#000');
+    const fieldW = textWidth('WWWWWWWWWW', 2) + 16;
+    const x = Math.round(W / 2 - fieldW / 2);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x - 2, 66, fieldW + 4, 24);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x, 68, fieldW, 20);
+    drawText(playerName, x + 8, 73, 2, '#fff');
+    if (Math.floor(time * 2) % 2 === 0 && playerName.length < 10) {
+      ctx.fillStyle = '#f8d000';
+      ctx.fillRect(x + 8 + playerName.length * 8, 83, 6, 2);
+    }
+    drawText('ATE 10 LETRAS. ENTER PARA COMECAR', W / 2, 98, 1, '#ccc', 'center');
+
+    drawText('5 FASES', W / 2, 116, 1, '#8cf', 'center');
+    LEVELS.forEach((l, i) => drawText((i + 1) + ' ' + l.name, W / 2 - 40, 126 + i * 9, 1, l.color));
+    LEVELS.forEach((l, i) => drawText('META ' + l.goal + '/' + DUCKS_PER_PHASE, W / 2 + 60, 126 + i * 9, 1, '#ccc', 'right'));
+
+    button('COMECAR', W / 2 + 46, 178, beginWithName, { w: 80, disabled: !playerName.trim() });
+    button('VOLTAR', W / 2 - 46, 178, goTitle, { w: 80 });
+  }
+
+  function drawRank() {
+    dim(0.85);
+    drawText('CLASSIFICACAO', W / 2, 10, 2, '#f8d000', 'center', '#a03000');
+    drawText('POS', 18, 32, 1, '#8cf');
+    drawText('NOME', 40, 32, 1, '#8cf');
+    drawText('FASE', 140, 32, 1, '#8cf');
+    drawText('PONTOS', 238, 32, 1, '#8cf', 'right');
+    ctx.fillStyle = '#8cf';
+    ctx.fillRect(16, 40, 224, 1);
+    if (!ranking.length) drawText('NINGUEM JOGOU AINDA', W / 2, 90, 1, '#ccc', 'center');
+    ranking.forEach((r, i) => {
+      const y = 46 + i * 13;
+      const me = r === lastEntry;
+      if (me) {
+        ctx.fillStyle = '#a03000';
+        ctx.fillRect(14, y - 3, 228, 11);
+      }
+      const color = i === 0 ? '#f8d000' : i === 1 ? '#e0e0e0' : i === 2 ? '#ff9c50' : '#fff';
+      drawText((i + 1) + '.', 18, y, 1, color);
+      drawText(r.name, 40, y, 1, color);
+      const lv = LEVELS[r.phase - 1];
+      drawText(r.won ? 'VENCEU' : r.phase + ' ' + r.level, 140, y, 1, r.won ? '#f8d000' : lv ? lv.color : '#fff');
+      drawText(String(r.score), 238, y, 1, color, 'right');
+    });
+    button('VOLTAR', 80, 186, () => { overlay = rankBack; }, { w: 90 });
+    button(clearConfirm > 0 ? 'CONFIRMA?' : 'LIMPAR', 176, 186, () => {
+      if (clearConfirm > 0) {
+        ranking = [];
+        lastEntry = null;
+        saveRanking();
+        clearConfirm = 0;
+      } else {
+        clearConfirm = 3;
+      }
+    }, { w: 90, color: '#ff8080' });
+  }
+
+  function drawPause() {
+    dim(0.65);
+    drawText('PAUSADO', W / 2, 50, 3, '#f8d000', 'center', '#a03000');
+    button('CONTINUAR', W / 2, 86, () => { overlay = null; }, { w: 130 });
+    button('CLASSIFICACAO', W / 2, 110, openRank, { w: 130 });
+    button('SAIR', W / 2, 134, goTitle, { w: 130 });
+  }
+
+  function drawEnd(won) {
+    dim(0.6);
+    if (won) drawText('VOCE VENCEU!', W / 2, 30, 3, '#f8d000', 'center', '#a03000');
+    else drawText('FIM DE JOGO', W / 2, 30, 3, '#fff', 'center', '#a03000');
+    drawText(playerName, W / 2, 58, 2, '#8cf', 'center');
+    drawText(score + ' PONTOS', W / 2, 74, 2, '#fff', 'center');
+    drawText(won ? 'PASSOU DAS 5 FASES!' : 'PAROU NA FASE ' + (phase + 1) + ' ' + level().name, W / 2, 92, 1, won ? '#f8d000' : level().color, 'center');
+    if (finalPos > 0 && finalPos <= 10) {
+      drawText(finalPos === 1 ? 'NOVO RECORDE!' : finalPos + ' LUGAR NA CLASSIFICACAO', W / 2, 104, 1, '#f8d000', 'center');
+    }
+    if (st > 0.8) {
+      button('NOVO JOGADOR', W / 2, 120, goName, { w: 130 });
+      button('CLASSIFICACAO', W / 2, 142, openRank, { w: 130 });
+      button('MENU', W / 2, 164, goTitle, { w: 130 });
+    }
   }
 
   function render() {
+    buttons = [];
     // Céu
     ctx.fillStyle = state === S.AWAY || (state === S.NEXT && lastResult === 2) ? '#ffb4a8' : '#5c94fc';
     ctx.fillRect(0, 0, W, H);
@@ -611,21 +807,27 @@
     drawDuck();
     ctx.drawImage(front, 0, 0);
 
-    if (state !== S.TITLE) drawHud();
+    if (IN_GAME.includes(state)) drawHud();
 
     popups.forEach(p => drawText(p.text, Math.round(p.x), Math.round(p.y), 1, '#fff', 'center', '#000'));
 
-    switch (state) {
-      case S.TITLE: drawTitle(); break;
-      case S.INTRO: messageBox(['RODADA', String(round)]); break;
-      case S.AWAY: if (st < 1.5) messageBox(['FUGIU!']); break;
-      case S.NEXT: if (lastResult === 2) messageBox(['FUGIU!']); else messageBox(['PEGOU!']); break;
-      case S.CLEAR: messageBox(['MUITO BEM!', 'PROXIMA RODADA']); break;
-      case S.OVER:
-        messageBox(['FIM DE JOGO', 'PONTOS ' + score]);
-        if (score >= best && score > 0) drawText('NOVO RECORDE!', W / 2, 120, 2, '#f8d000', 'center', '#000');
-        if (st > 1.5 && Math.floor(time * 2) % 2 === 0) drawText('CLIQUE PARA VOLTAR', W / 2, 140, 1, '#fff', 'center', '#000');
-        break;
+    if (overlay === 'rank') {
+      buttons = [];
+      drawRank();
+    } else if (overlay === 'pause') {
+      buttons = [];
+      drawPause();
+    } else {
+      switch (state) {
+        case S.TITLE: drawTitle(); break;
+        case S.NAME: drawName(); break;
+        case S.INTRO: messageBox(['FASE ' + (phase + 1), level().name]); break;
+        case S.AWAY: if (st < 1.5) messageBox(['FUGIU!']); break;
+        case S.NEXT: messageBox([lastResult === 2 ? 'FUGIU!' : 'PEGOU!']); break;
+        case S.CLEAR: messageBox(['MUITO BEM!', 'PROXIMA FASE']); break;
+        case S.OVER: drawEnd(false); break;
+        case S.WIN: drawEnd(true); break;
+      }
     }
 
     if (flash > 0) {
@@ -642,19 +844,45 @@
     return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
   }
 
-  cv.addEventListener('pointermove', e => { mouse = toGame(e); });
   addEventListener('pointermove', e => { mouse = toGame(e); });
   cv.addEventListener('pointerdown', e => {
     e.preventDefault();
     audio();
     mouse = toGame(e);
-    if (state === S.TITLE) startGame();
-    else if (state === S.OVER) { if (st > 1.5) setState(S.TITLE); }
-    else shoot(mouse.x, mouse.y);
+    const b = buttons.find(b => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h);
+    if (b) {
+      sfx.hit();
+      b.action();
+      return;
+    }
+    if (!overlay) shoot(mouse.x, mouse.y);
   });
   cv.addEventListener('contextmenu', e => e.preventDefault());
+
   addEventListener('keydown', e => {
+    if (state === S.NAME && !overlay) {
+      if (e.key === 'Enter') beginWithName();
+      else if (e.key === 'Backspace') playerName = playerName.slice(0, -1);
+      else if (e.key === 'Escape') goTitle();
+      else if (e.key.length === 1 && playerName.length < 10) {
+        const ch = e.key.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+        if (/^[A-Z0-9 ]$/.test(ch) && !(ch === ' ' && !playerName)) playerName += ch;
+      }
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'm' || e.key === 'M') muted = !muted;
+    if ((e.key === 'Escape' || e.key === 'p' || e.key === 'P') && IN_GAME.includes(state)) {
+      if (overlay === 'rank') overlay = rankBack;
+      else overlay = overlay ? null : 'pause';
+    } else if (e.key === 'Escape' && overlay === 'rank') {
+      overlay = rankBack;
+    }
+  });
+
+  // Pausa sozinho se a janela perder o foco no meio do jogo
+  addEventListener('blur', () => {
+    if (IN_GAME.includes(state) && !overlay) overlay = 'pause';
   });
 
   // ---------- Loop ----------
@@ -669,5 +897,8 @@
   requestAnimationFrame(frame);
 
   // Exposto para testes no console
-  window.__epa = { get state() { return state; }, get duck() { return duck; }, get score() { return score; }, S };
+  window.__epa = {
+    get state() { return state; }, get duck() { return duck; }, get score() { return score; },
+    get phase() { return phase; }, get overlay() { return overlay; }, S,
+  };
 })();
