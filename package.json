@@ -4,6 +4,7 @@
   "description": "EPA! RK Hunt: jogo estilo Duck Hunt em HTML/JS/Canvas, com a marca RK Informática e Games",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   }
 }
