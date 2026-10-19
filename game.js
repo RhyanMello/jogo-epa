@@ -333,11 +333,11 @@
 
   // ---------- Fases ----------
   const LEVELS = [
-    { name: 'FACIL', speed: 0.9, flyTime: 6, goal: 3, color: '#5ccd33' },
-    { name: 'NORMAL', speed: 1.2, flyTime: 5, goal: 3, color: '#8cd0ff' },
-    { name: 'MEDIO', speed: 1.55, flyTime: 4.5, goal: 3, color: '#f8d000' },
-    { name: 'DIFICIL', speed: 1.95, flyTime: 4, goal: 3, color: '#ff8c30' },
-    { name: 'IMPOSSIVEL', speed: 2.6, flyTime: 3.3, goal: 2, color: '#ff3030' },
+    { name: 'FACIL', speed: 1.35, flyTime: 4.2, goal: 4, color: '#5ccd33' },
+    { name: 'NORMAL', speed: 1.8, flyTime: 3.5, goal: 4, color: '#8cd0ff' },
+    { name: 'MEDIO', speed: 2.3, flyTime: 3.2, goal: 4, color: '#f8d000' },
+    { name: 'DIFICIL', speed: 2.9, flyTime: 2.8, goal: 4, color: '#ff8c30' },
+    { name: 'IMPOSSIVEL', speed: 3.9, flyTime: 2.3, goal: 3, color: '#ff3030' },
   ];
   const DUCKS_PER_PHASE = 5;
 
@@ -451,7 +451,7 @@
     shots--;
     flash = 0.06;
     shotSfx();
-    const pad = 5;
+    const pad = 2;
     if (x >= duck.x - pad && x <= duck.x + DUCK_W + pad && y >= duck.y - pad && y <= duck.y + DUCK_H + pad) {
       const pts = duck.type.points * (phase + 1);
       score += pts;
